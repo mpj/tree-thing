@@ -11,7 +11,7 @@ var deepClone = require('mout/lang/deepClone')
 var deepEquals = require('deep-equal')
 
 
-// TODO Stream on remove
+// TODO: duplication between put/remove
 var TreeThing = {
   ensureInit: function() {
     this._changes  = this._changes || []
@@ -62,6 +62,7 @@ var TreeThing = {
           me.snapshot(notifyPath, after)
         ], function(beforeValue, afterValue) {
           if (!deepEquals(beforeValue, afterValue)) {
+
             me._watchers[notifyPath].forEach(function(watcher) {
               watcher(afterValue)
             })
@@ -91,12 +92,18 @@ var TreeThing = {
       })
   },
   remove: function(path) {
+    var me = this;
     this.ensureInit()
+    var beforeChangeSequence = me._changes.length - 1
     this._changes.push({
       type: 'remove',
       path: path
     })
-    return Q(this._changes.length-1)
+    var afterChangeSequence = me._changes.length - 1
+    return me._notifyAboutChanges(path, beforeChangeSequence, afterChangeSequence)
+      .then(function() {
+        return afterChangeSequence
+      })
   },
   snapshot: function(path, until) {
     if (until === -1) return Q(null);
@@ -191,6 +198,10 @@ describe('When we have a thing', function() {
     tt.stream('animals/dogs').onChange(function(dogs) {
       dogsStreamed = dogs
     })
+    var animalsStreamed;
+    tt.stream('animals').onChange(function(animals) {
+      animalsStreamed = animals
+    })
 
     tt.put('animals/cats', [{ name: 'Mittens' }]).then(function() {
       expect(dogsStreamed).to.be.null
@@ -202,6 +213,10 @@ describe('When we have a thing', function() {
       return tt.put('animals/dogs', [{ name: 'Karo' }]) //same as before
     }).then(function() {
       expect(dogsStreamed).to.be.null // was unchanged, therefore not strean
+      return tt.remove('animals/dogs')
+    }).then(function() {
+      expect(animalsStreamed.dogs).to.not.exist
+      animalsStreamed.cats[0].name.should.equal('Mittens')
     })
     .done(done)
   })
