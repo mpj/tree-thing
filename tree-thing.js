@@ -5,6 +5,7 @@ var Q = require('q')
 Q.longStackSupport = true;
 var forEach = require('mout/array/forEach')
 var combine = require('mout/array/combine')
+var reject = require('mout/array/reject')
 var deepClone = require('mout/lang/deepClone')
 
 // Not using mouts deepEquals because we need array support.
@@ -24,6 +25,13 @@ function ancestry(path) {
   return arr
 }
 
+// Gets an array of the path part, sans root
+function chain(path) {
+  return reject(path.split('/'), function(part) {
+    return part === ''
+  })
+}
+
 // TODO: Ignore trailing slash
 var TreeThing = {
   ensureInit: function() {
@@ -35,10 +43,9 @@ var TreeThing = {
     forEach(this._changes, function(change, i) {
       change = deepClone(change)
       var cursor = root
-      var pathPaths = change.path.split('/')
-      pathPaths.forEach(function(part, i) {
-        if(part === '') return; // Skip root
-        var isLast = i + 1 === pathPaths.length
+      var pathChain = chain(change.path)
+      pathChain.forEach(function(part, i) {
+        var isLast = i + 1 === pathChain.length
         if (isLast) {
           if (change.type === 'put') {
             cursor[part] = change.data
@@ -108,9 +115,9 @@ var TreeThing = {
     this.ensureInit()
     var root = this._generateTreeFromChanges(until);
     var cursor = root;
-    var pathParts = path.split('/')
+    var pathParts =chain(path)
     forEach(pathParts, function(part) {
-      if(part === '') return true; // Skip root
+
       if (!cursor[part]) {
         // Path does not exist, just return null
         cursor = null
