@@ -24,7 +24,6 @@ function ancestry(path) {
   return arr
 }
 
-// TODO: duplication between put/remove
 // TODO: Ignore trailing slash
 var TreeThing = {
   ensureInit: function() {
