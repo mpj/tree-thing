@@ -5,15 +5,26 @@ var Q = require('q')
 Q.longStackSupport = true;
 var forEach = require('mout/array/forEach')
 var combine = require('mout/array/combine')
-var append = require('mout/array/append')
 var deepClone = require('mout/lang/deepClone')
 
 // Not using mouts deepEquals because we need array support.
 var deepEquals = require('deep-equal')
 
+function normalizePath(path) {
+  return path.indexOf('/') == 0 ? path : '/' + path
+}
+
+function ancestor(path) {
+  return normalizePath(path.split('/').slice(0, -1).join('/'))
+}
+
+function ancestry(path) {
+  var arr = [ path ]
+  while(arr[0] !== '/') arr.unshift(ancestor(arr[0]));
+  return arr
+}
 
 // TODO: duplication between put/remove
-// TODO: Stream for root node
 // TODO: Ignore trailing slash
 var TreeThing = {
   ensureInit: function() {
@@ -45,26 +56,15 @@ var TreeThing = {
   },
   _notifyAboutChanges: function(path, before, after) {
     var me = this
-    var partialPathParts = []
 
     return Q.all(
-      // Generate all paths that are dependent on
-      // this change.
-      path.split('/').map(function(part) {
-        partialPathParts.push(part)
-        var partialPath = partialPathParts.join('/')
-        if (partialPath === '') return '/';
-        return partialPath
-      }).map(function(notifyPath) {
-
+      ancestry(path).map(function(notifyPath) {
         if (!me._watchers[notifyPath] ||
              me._watchers[notifyPath].length === 0) {
           // Nothing listening on this path, don't bother
           // doing any work.
-          console.log("nope, nuthing listening to", notifyPath)
           return Q(true);
         }
-        console.log("path", notifyPath, "has watchers")
         // Only notify the watcher if the change actually caused
         // the result to change.
         return Q.spread([
@@ -73,7 +73,6 @@ var TreeThing = {
         ], function(beforeValue, afterValue) {
           if (!deepEquals(beforeValue, afterValue)) {
             me._watchers[notifyPath].forEach(function(watcher) {
-
               watcher(afterValue)
             })
           }
@@ -82,61 +81,44 @@ var TreeThing = {
       })
     )
   },
-  put: function(path, data) {
-    path = path.indexOf('/') == 0 ? path : '/' + path
-    var me = this;
-    me.ensureInit()
-
-    var beforeChangeSequence = me._changes.length - 1
-
-    me._changes.push({
-      type: 'put',
+  _change: function(type, path, data) {
+    path = normalizePath(path)
+    this.ensureInit()
+    var before = this._changes.length - 1
+    this._changes.push({
+      type: type,
       path: path,
       data: data
     });
-
-    var afterChangeSequence = me._changes.length - 1
-
-    return me._notifyAboutChanges(path, beforeChangeSequence, afterChangeSequence)
+    var after = this._changes.length - 1
+    return this
+      ._notifyAboutChanges(path, before, after)
       .then(function() {
-        return afterChangeSequence
+        return after
       })
+  },
+  put: function(path, data) {
+    return this._change('put', path, data)
   },
   remove: function(path) {
-    path = path.indexOf('/') == 0 ? path : '/' + path
-    var me = this;
-    this.ensureInit()
-    var beforeChangeSequence = me._changes.length - 1
-    this._changes.push({
-      type: 'remove',
-      path: path
-    })
-    var afterChangeSequence = me._changes.length - 1
-    return me._notifyAboutChanges(path, beforeChangeSequence, afterChangeSequence)
-      .then(function() {
-        return afterChangeSequence
-      })
+    return this._change('remove', path)
   },
   snapshot: function(path, until) {
-    path = path.indexOf('/') === 0 ? path : '/' + path
-        console.log("snapshotting", path)
+    path = normalizePath(path)
     if (until === -1) return Q(null);
     this.ensureInit()
     var root = this._generateTreeFromChanges(until);
     var cursor = root;
-    console.log("root is", cursor)
     var pathParts = path.split('/')
     forEach(pathParts, function(part) {
       if(part === '') return true; // Skip root
       if (!cursor[part]) {
-        console.log("hai", part, cursor)
         // Path does not exist, just return null
         cursor = null
         return false
       }
       cursor = cursor[part]
     })
-    console.log("snapshot result", cursor)
 
     return Q(cursor)
   },
@@ -161,7 +143,7 @@ describe('When we have a thing', function() {
     tt = Object.create(TreeThing)
   })
 
-  xit('should be possible to insert and snapshot a node (heirarchy)', function(done) {
+  it('should be possible to insert and snapshot a node (heirarchy)', function(done) {
     tt.put('animals/dogs/chiuauas', [{ name: 'Caitlin' }])
     tt.snapshot('animals/dogs').then(function(s) {
       s.chiuauas[0].name.should.equal('Caitlin')
@@ -169,7 +151,7 @@ describe('When we have a thing', function() {
     .done(done)
   })
 
-  xit('removes nodes', function(done) {
+  it('removes nodes', function(done) {
     tt.put('animals/dogs', {}).then(function() {
       return tt.put('animals/cats', {})
     }).then(function() {
@@ -189,7 +171,7 @@ describe('When we have a thing', function() {
 
   })
 
-  xit('should be possible to snapshots old versions', function(done) {
+  it('should be possible to snapshots old versions', function(done) {
     tt.put('animals/dogs/chiuauas', [{ name: 'Caitlin' }]).then(function(sequenceNumber) {
       sequenceNumber.should.equal(0)
     }).then(function() {
@@ -215,7 +197,7 @@ describe('When we have a thing', function() {
   it('should stream changes to watchers', function(done) {
 
     var dogsStreamed = undefined;
-    tt.stream('animals/dogs').onChange(function(dogs) {
+    tt.stream('/animals/dogs').onChange(function(dogs) {
       dogsStreamed = dogs
     })
     var animalsStreamed = undefined;
@@ -232,7 +214,6 @@ describe('When we have a thing', function() {
     }).then(function() {
       return tt.put('animals/dogs', [{ name: 'Karo' }])
     }).then(function() {
-      console.log("rootStreamed", rootStreamed)
       rootStreamed.animals.dogs[0].name.should.equal('Karo')
       dogsStreamed[0].name.should.equal('Karo')
       dogsStreamed = null
